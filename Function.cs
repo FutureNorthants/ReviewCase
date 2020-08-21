@@ -10,8 +10,10 @@ using System.Net.Http;
 using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
 using Amazon.DynamoDBv2;
-using Amazon.DynamoDBv2.Model;
 using Amazon;
+using Amazon.DynamoDBv2.DocumentModel;
+using Amazon.S3;
+using Amazon.S3.Model;
 
 [assembly: LambdaSerializer(typeof(Amazon.Lambda.Serialization.Json.JsonSerializer))]
 
@@ -25,9 +27,9 @@ namespace ReviewCase
 
         private static String caseReference;
         private static String taskToken;
-        private static String cxmEndPoint;
-        private static String cxmAPIKey;
         private static String tableName = "MailBotCasesTest";
+        private static String bucketName = "nbc-reporting";
+        private static String cxmURL = "https://northamptonuat.q.jadu.net/q/case/";
 
         private Secrets secrets = null;
 
@@ -39,45 +41,105 @@ namespace ReviewCase
                 JObject o = JObject.Parse(input.ToString());
                 caseReference = (string)o.SelectToken("CaseReference");
                 taskToken = (string)o.SelectToken("TaskToken");
-                cxmEndPoint = secrets.cxmEndPointTest;
-                cxmAPIKey = secrets.cxmAPIKeyTest;
                 try
                 {
                     if (context.InvokedFunctionArn.ToLower().Contains("prod"))
                     {
                         tableName = "MailBotCasesLive";
-                        cxmEndPoint = secrets.cxmEndPointLive;
-                        cxmAPIKey = secrets.cxmAPIKeyLive;
+                        cxmURL = "https://myaccount.northampton.gov.uk/q/case/";
                     }
                 }
                 catch (Exception)
                 {
                 }
-                if (await GetCaseDetailsAsync())
+                Boolean correctService = await CompareAsync(caseReference, "Service", secrets.trelloBoardTrainingLabelService, secrets.trelloBoardTrainingLabelAWSLex);
+
+                ReviewedCase reviewedCase = new ReviewedCase
                 {
-                    await SendSuccessAsync();
-                }
+                    ActionDate = DateTime.Now.ToString("yyyy/MM/dd"),
+                    CaseReference = caseReference,
+                    UserEmail = (String)o.SelectToken("Transitioner"),
+                    CorrectService = correctService
+                };
+                await SaveCase(caseReference + "-REVIEWED", JsonConvert.SerializeObject(reviewedCase));
+                await SendSuccessAsync();
             }
         }
 
-        private async Task<Boolean> GetCaseDetailsAsync()
+        private async Task<Boolean> CompareAsync(String caseReference, String fieldName, String fieldLabel, String techLabel)
         {
-            Boolean success = false;
-            CaseDetails caseDetails = await GetCustomerContactAsync(cxmEndPoint, cxmAPIKey, caseReference, taskToken);
             try
             {
-                if (!String.IsNullOrEmpty(caseDetails.customerContact))
+                AmazonDynamoDBClient dynamoDBClient = new AmazonDynamoDBClient(primaryRegion);
+                Table productCatalog = Table.LoadTable(dynamoDBClient, tableName);
+                GetItemOperationConfig config = new GetItemOperationConfig
                 {
-                    success = await StoreContactToDynamoAsync(caseReference, caseDetails.customerContact);
+                    AttributesToGet = new List<string> { "Proposed" + fieldName, "Actual" + fieldName},
+                    ConsistentRead = true
+                };
+                Document document = await productCatalog.GetItemAsync(caseReference, config);
+                if(document["Proposed" + fieldName].AsPrimitive().Value.ToString().Equals(document["Actual" + fieldName].AsPrimitive().Value.ToString())){
+                    return true;
                 }
+                else
+                {
+                    HttpClient cxmClient = new HttpClient();
+                    cxmClient.BaseAddress = new Uri("https://api.trello.com");
+                    String requestParameters = "key=" + secrets.trelloAPIKey;
+                    requestParameters += "&token=" + secrets.trelloAPIToken;
+                    requestParameters += "&idList=" + secrets.trelloBoardTrainingListPending;
+                    requestParameters += "&name=" + caseReference + " - " +  fieldName + " Amended";
+                    requestParameters += "&desc=" + "**Proposed " +  fieldName + " : ** `" + document["Proposed" + fieldName].AsPrimitive().Value.ToString() + "`." +
+                                                    " %0A **Actual " + fieldName + " : ** `" + document["Actual" + fieldName].AsPrimitive().Value.ToString() + "`" +
+                                                    " %0A **[Full Case Details](" + cxmURL +  caseReference + "/timeline)**";
+                    requestParameters += "&pos=" + "bottom";
+                    requestParameters += "&idLabels=" + fieldLabel + "," + techLabel;
+                    HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "1/cards?" + requestParameters);
+                    try
+                    {
+                        HttpResponseMessage response = cxmClient.SendAsync(request).Result;
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            await SendFailureAsync("Getting case details for " + caseReference, response.StatusCode.ToString());
+                            Console.WriteLine("ERROR : GetStaffResponseAsync : " + request.ToString());
+                            Console.WriteLine("ERROR : GetStaffResponseAsync : " + response.StatusCode.ToString());
+                        }
+                    }
+                    catch (Exception error)
+                    {
+                        await SendFailureAsync("Getting case details for " + caseReference, error.Message);
+                        Console.WriteLine("ERROR : GetStaffResponseAsync : " + error.StackTrace);
+                    }
+                    return false;
+                } 
             }
             catch (Exception error)
             {
-                await SendFailureAsync(error.Message, "GetCaseDetailsAsync");
-                Console.WriteLine("ERROR : GetCaseDetailsAsync :  " + error.Message);
-                success = false; ;
+                Console.WriteLine("ERROR : GetContactFromDynamoAsync : " + error.Message);
+                Console.WriteLine(error.StackTrace);
+                return false;
             }
-            return success;
+        }
+
+        private async Task<Boolean> SaveCase(String fileName, String caseDetails)
+        {
+            AmazonS3Client client = new AmazonS3Client(primaryRegion);
+            try
+            {
+                PutObjectRequest putRequest = new PutObjectRequest()
+                {
+                    BucketName = bucketName,
+                    Key = fileName,
+                    ContentBody = caseDetails
+                };
+                await client.PutObjectAsync(putRequest);
+            }
+            catch (Exception error)
+            {
+                await SendFailureAsync("Saving case details for " + caseReference, error.Message);
+                Console.WriteLine("ERROR : SaveCase : " + error.StackTrace);
+            }
+            return true;
         }
 
         private async Task<Boolean> GetSecrets()
@@ -101,38 +163,6 @@ namespace ReviewCase
                 Console.WriteLine("ERROR : GetSecretValue : " + error.StackTrace);
                 return false;
             }
-        }
-
-        private async Task<CaseDetails> GetCustomerContactAsync(String cxmEndPoint, String cxmAPIKey, String caseReference, String taskToken)
-        {
-            CaseDetails caseDetails = new CaseDetails();
-            HttpClient cxmClient = new HttpClient();
-            cxmClient.BaseAddress = new Uri(cxmEndPoint);
-            String requestParameters = "key=" + cxmAPIKey;
-            HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, "/api/service-api/norbert/case/" + caseReference + "?" + requestParameters);
-            try
-            {
-                HttpResponseMessage response = cxmClient.SendAsync(request).Result;
-                if (response.IsSuccessStatusCode)
-                {
-                    HttpContent responseContent = response.Content;
-                    String responseString = responseContent.ReadAsStringAsync().Result;
-                    JObject caseSearch = JObject.Parse(responseString);
-                    caseDetails.customerContact = (String)caseSearch.SelectToken("values.enquiry_details");
-                }
-                else
-                {
-                    await SendFailureAsync("Getting case details for " + caseReference, response.StatusCode.ToString());
-                    Console.WriteLine("ERROR : GetStaffResponseAsync : " + request.ToString());
-                    Console.WriteLine("ERROR : GetStaffResponseAsync : " + response.StatusCode.ToString());
-                }
-            }
-            catch (Exception error)
-            {
-                await SendFailureAsync("Getting case details for " + caseReference, error.Message);
-                Console.WriteLine("ERROR : GetStaffResponseAsync : " + error.StackTrace);
-            }
-            return caseDetails;
         }
 
         private async Task SendSuccessAsync()
@@ -179,52 +209,30 @@ namespace ReviewCase
             }
             await Task.CompletedTask;
         }
-
-        private async Task<Boolean> StoreContactToDynamoAsync(String caseReference, String initialContact)
-        {
-            try
-            {
-                AmazonDynamoDBClient dynamoDBClient = new AmazonDynamoDBClient(primaryRegion);
-                UpdateItemRequest dynamoRequest = new UpdateItemRequest
-                {
-                    TableName = tableName,
-                    Key = new Dictionary<string, AttributeValue>
-                        {
-                              { "CaseReference", new AttributeValue { S = caseReference }}
-                        },
-                    ExpressionAttributeNames = new Dictionary<string, string>()
-                    {
-                        {"#Field", "InitialContact"}
-                    },
-                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>()
-                    {
-                        {":Value",new AttributeValue {S = initialContact}}
-                    },
-
-                    UpdateExpression = "SET #Field = :Value"
-                };
-                await dynamoDBClient.UpdateItemAsync(dynamoRequest);
-                return true;
-            }
-            catch (Exception error)
-            {
-                Console.WriteLine("ERROR : StoreContactToDynamoDB :" + error.Message);
-                Console.WriteLine(error.StackTrace);
-                return false;
-            }
-        }
-
-    }
-    class CaseDetails
-    {
-        public String customerContact { get; set; } = "";
     }
 
     public class Secrets
     {
-        public string cxmEndPointTest { get; set; }
-        public string cxmEndPointLive { get; set; }
-        public string cxmAPIKeyTest { get; set; }
-        public string cxmAPIKeyLive { get; set; }
+        public String cxmEndPointTest { get; set; }
+        public String cxmEndPointLive { get; set; }
+        public String cxmAPIKeyTest { get; set; }
+        public String cxmAPIKeyLive { get; set; }
+        public String trelloBoardTrainingListPending { get; set; }
+        public String trelloAPIKey { get; set; }
+        public String trelloAPIToken { get; set; }
+        public String trelloBoardTrainingLabelService { get; set; }
+        public String trelloBoardTrainingLabelResponse { get; set; }
+        public String trelloBoardTrainingLabelSentiment { get; set; }
+        public String trelloBoardTrainingLabelAWSLex { get; set; }
+        public String trelloBoardTrainingLabelMicrosoftQNA { get; set; }
+    }
+
+    public class ReviewedCase
+    {
+        public String Action = "reviewed";
+        public String ActionDate { get; set; }
+        public String CaseReference { get; set; }
+        public String UserEmail { get; set; }
+        public Boolean CorrectService { get; set; }
     }
 }
