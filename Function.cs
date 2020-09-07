@@ -53,13 +53,15 @@ namespace ReviewCase
                 {
                 }
                 Boolean correctService = await CompareAsync(caseReference, "Service", secrets.trelloBoardTrainingLabelService, secrets.trelloBoardTrainingLabelAWSLex);
+                Boolean correctSentiment = await CompareAsync(caseReference, "Sentiment", secrets.trelloBoardTrainingLabelSentiment, secrets.trelloBoardTrainingLabelAWSLex);
 
                 ReviewedCase reviewedCase = new ReviewedCase
                 {
                     ActionDate = DateTime.Now.ToString("yyyy/MM/dd"),
                     CaseReference = caseReference,
                     UserEmail = (String)o.SelectToken("Transitioner"),
-                    CorrectService = correctService
+                    CorrectService = correctService,
+                    CorrectSentiment = correctSentiment
                 };
                 await SaveCase(caseReference + "-REVIEWED", JsonConvert.SerializeObject(reviewedCase));
                 await SendSuccessAsync();
@@ -234,5 +236,6 @@ namespace ReviewCase
         public String CaseReference { get; set; }
         public String UserEmail { get; set; }
         public Boolean CorrectService { get; set; }
+        public Boolean CorrectSentiment { get; set; }
     }
 }
