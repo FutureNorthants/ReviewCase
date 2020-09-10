@@ -54,6 +54,7 @@ namespace ReviewCase
                 }
                 Boolean correctService = await CompareAsync(caseReference, "Service", secrets.trelloBoardTrainingLabelService, secrets.trelloBoardTrainingLabelAWSLex);
                 Boolean correctSentiment = await CompareAsync(caseReference, "Sentiment", secrets.trelloBoardTrainingLabelSentiment, secrets.trelloBoardTrainingLabelAWSLex);
+                Boolean correctResponse = await CompareAsync(caseReference, "Response", secrets.trelloBoardTrainingLabelResponse, secrets.trelloBoardTrainingLabelAWSLex);
 
                 ReviewedCase reviewedCase = new ReviewedCase
                 {
@@ -61,7 +62,8 @@ namespace ReviewCase
                     CaseReference = caseReference,
                     UserEmail = (String)o.SelectToken("Transitioner"),
                     CorrectService = correctService,
-                    CorrectSentiment = correctSentiment
+                    CorrectSentiment = correctSentiment,
+                    CorrectResponse = correctResponse
                 };
                 await SaveCase(caseReference + "-REVIEWED", JsonConvert.SerializeObject(reviewedCase));
                 await SendSuccessAsync();
@@ -91,9 +93,19 @@ namespace ReviewCase
                     requestParameters += "&token=" + secrets.trelloAPIToken;
                     requestParameters += "&idList=" + secrets.trelloBoardTrainingListPending;
                     requestParameters += "&name=" + caseReference + " - " +  fieldName + " Amended";
-                    requestParameters += "&desc=" + "**Proposed " +  fieldName + " : ** `" + document["Proposed" + fieldName].AsPrimitive().Value.ToString() + "`." +
-                                                    " %0A **Actual " + fieldName + " : ** `" + document["Actual" + fieldName].AsPrimitive().Value.ToString() + "`" +
-                                                    " %0A **[Full Case Details](" + cxmURL +  caseReference + "/timeline)**";
+                    if(document["Proposed" + fieldName].AsPrimitive().Value.ToString().Equals(""))
+                    {
+                        //TODO Create Trello Card for non proposed response idenfieid as FAQ
+                        //requestParameters += "&desc=" + "**Proposed " + fieldName + " : ** `" + document["Proposed" + fieldName].AsPrimitive().Value.ToString() + "`." +
+                        //                                                   " %0A **Actual " + fieldName + " : ** `" + document["Actual" + fieldName].AsPrimitive().Value.ToString() + "`" +
+                        //                                                   " %0A **[Full Case Details](" + cxmURL + caseReference + "/timeline)**";
+                    }
+                    else
+                    {
+                        requestParameters += "&desc=" + "**Proposed " + fieldName + " : ** `" + document["Proposed" + fieldName].AsPrimitive().Value.ToString() + "`." +
+                                                   " %0A **Actual " + fieldName + " : ** `" + document["Actual" + fieldName].AsPrimitive().Value.ToString() + "`" +
+                                                   " %0A **[Full Case Details](" + cxmURL + caseReference + "/timeline)**";
+                    }                 
                     requestParameters += "&pos=" + "bottom";
                     requestParameters += "&idLabels=" + fieldLabel + "," + techLabel;
                     HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "1/cards?" + requestParameters);
@@ -237,5 +249,6 @@ namespace ReviewCase
         public String UserEmail { get; set; }
         public Boolean CorrectService { get; set; }
         public Boolean CorrectSentiment { get; set; }
+        public Boolean CorrectResponse { get; set; }
     }
 }
