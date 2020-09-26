@@ -58,7 +58,7 @@ namespace ReviewCase
 
                 ReviewedCase reviewedCase = new ReviewedCase
                 {
-                    ActionDate = DateTime.Now.ToString("yyyy/MM/dd"),
+                    ActionDate = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                     CaseReference = caseReference,
                     UserEmail = (String)o.SelectToken("Transitioner"),
                     CorrectService = correctService,
