@@ -28,7 +28,7 @@ namespace ReviewCase
         private static String caseReference;
         private static String taskToken;
         private static String tableName = "MailBotCasesTest";
-        private static String bucketName = "nbc-reporting";
+        private static String bucketName;
         private static String cxmURL = "https://northamptonuat.q.jadu.net/q/case/";
 
         private Secrets secrets = null;
@@ -41,12 +41,16 @@ namespace ReviewCase
                 JObject o = JObject.Parse(input.ToString());
                 caseReference = (string)o.SelectToken("CaseReference");
                 taskToken = (string)o.SelectToken("TaskToken");
+                bucketName = secrets.reportingBucketTest;
+                cxmURL = secrets.myAccountEndPointTest;
                 try
                 {
                     if (context.InvokedFunctionArn.ToLower().Contains("prod"))
                     {
                         tableName = "MailBotCasesLive";
+                        cxmURL = secrets.myAccountEndPointLive;
                         cxmURL = "https://myaccount.northampton.gov.uk/q/case/";
+                        bucketName = secrets.reportingBucketLive;
                     }
                 }
                 catch (Exception)
@@ -54,7 +58,11 @@ namespace ReviewCase
                 }
                 Boolean correctService = await CompareAsync(caseReference, "Service", secrets.trelloBoardTrainingLabelService, secrets.trelloBoardTrainingLabelAWSLex);
                 Boolean correctSentiment = await CompareAsync(caseReference, "Sentiment", secrets.trelloBoardTrainingLabelSentiment, secrets.trelloBoardTrainingLabelAWSLex);
-                Boolean correctResponse = await CompareAsync(caseReference, "Response", secrets.trelloBoardTrainingLabelResponse, secrets.trelloBoardTrainingLabelAWSLex);
+                Boolean correctRecommendation = await GetRecommendationAccuracy();
+                if (!correctRecommendation) 
+                {
+                    await CompareAsync(caseReference, "Response", secrets.trelloBoardTrainingLabelResponse, secrets.trelloBoardTrainingLabelAWSLex);
+                }
 
                 ReviewedCase reviewedCase = new ReviewedCase
                 {
@@ -63,10 +71,40 @@ namespace ReviewCase
                     UserEmail = (String)o.SelectToken("Transitioner"),
                     CorrectService = correctService,
                     CorrectSentiment = correctSentiment,
-                    CorrectResponse = correctResponse
+                    CorrectResponse = correctRecommendation
                 };
                 await SaveCase(caseReference + "-REVIEWED", JsonConvert.SerializeObject(reviewedCase));
                 await SendSuccessAsync();
+            }
+        }
+
+        private async Task<Boolean> GetRecommendationAccuracy()
+        {
+            try
+            {
+                AmazonDynamoDBClient dynamoDBClient = new AmazonDynamoDBClient(primaryRegion);
+                Table productCatalog = Table.LoadTable(dynamoDBClient, tableName);
+                GetItemOperationConfig config = new GetItemOperationConfig
+                {
+                    AttributesToGet = new List<string> { "RecommendationAccuracy" },
+                    ConsistentRead = true
+                };
+                Document document = await productCatalog.GetItemAsync(caseReference, config);
+                String recommendationAccuracy =  document["RecommendationAccuracy"].AsPrimitive().Value.ToString();
+                if (recommendationAccuracy.Equals("recommendation_was_usable"))
+                {
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            catch (Exception error)
+            {
+                Console.WriteLine("ERROR : GetContactFromDynamoAsync : " + error.Message);
+                Console.WriteLine(error.StackTrace);
+                return false;
             }
         }
 
@@ -104,7 +142,7 @@ namespace ReviewCase
                     {
                         requestParameters += "&desc=" + "**Proposed " + fieldName + " : ** `" + document["Proposed" + fieldName].AsPrimitive().Value.ToString() + "`." +
                                                    " %0A **Actual " + fieldName + " : ** `" + document["Actual" + fieldName].AsPrimitive().Value.ToString() + "`" +
-                                                   " %0A **[Full Case Details](" + cxmURL + caseReference + "/timeline)**";
+                                                   " %0A **[Full Case Details](" + cxmURL  + "/q/case/" + caseReference + "/timeline)**";
                     }                 
                     requestParameters += "&pos=" + "bottom";
                     requestParameters += "&idLabels=" + fieldLabel + "," + techLabel;
@@ -239,6 +277,10 @@ namespace ReviewCase
         public String trelloBoardTrainingLabelSentiment { get; set; }
         public String trelloBoardTrainingLabelAWSLex { get; set; }
         public String trelloBoardTrainingLabelMicrosoftQNA { get; set; }
+        public String reportingBucketLive { get; set; }
+        public String reportingBucketTest { get; set; }
+        public String myAccountEndPointLive { get; set; }
+        public String myAccountEndPointTest { get; set; }
     }
 
     public class ReviewedCase
@@ -247,6 +289,8 @@ namespace ReviewCase
         public String ActionDate { get; set; }
         public String CaseReference { get; set; }
         public String UserEmail { get; set; }
+        public String ReportingBucketLive { get; set; }
+        public String ReportingBucketTest { get; set; }
         public Boolean CorrectService { get; set; }
         public Boolean CorrectSentiment { get; set; }
         public Boolean CorrectResponse { get; set; }
