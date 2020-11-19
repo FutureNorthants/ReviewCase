@@ -43,6 +43,7 @@ namespace ReviewCase
                 taskToken = (string)o.SelectToken("TaskToken");
                 bucketName = secrets.reportingBucketTest;
                 cxmURL = secrets.myAccountEndPointTest;
+                Console.WriteLine(caseReference);
                 try
                 {
                     if (context.InvokedFunctionArn.ToLower().Contains("prod"))
@@ -100,9 +101,13 @@ namespace ReviewCase
                     return false;
                 }
             }
+            catch(NullReferenceException error)
+            {
+                return false;
+            }
             catch (Exception error)
             {
-                Console.WriteLine("ERROR : GetContactFromDynamoAsync : " + error.Message);
+                Console.WriteLine(caseReference + " : ERROR : GetContactFromDynamoAsync : " + error.Message);
                 Console.WriteLine(error.StackTrace);
                 return false;
             }
@@ -153,21 +158,21 @@ namespace ReviewCase
                         if (!response.IsSuccessStatusCode)
                         {
                             await SendFailureAsync("Getting case details for " + caseReference, response.StatusCode.ToString());
-                            Console.WriteLine("ERROR : GetStaffResponseAsync : " + request.ToString());
-                            Console.WriteLine("ERROR : GetStaffResponseAsync : " + response.StatusCode.ToString());
+                            Console.WriteLine(caseReference + " : ERROR : GetStaffResponseAsync : " + request.ToString());
+                            Console.WriteLine(caseReference + " : ERROR : GetStaffResponseAsync : " + response.StatusCode.ToString());
                         }
                     }
                     catch (Exception error)
                     {
                         await SendFailureAsync("Getting case details for " + caseReference, error.Message);
-                        Console.WriteLine("ERROR : GetStaffResponseAsync : " + error.StackTrace);
+                        Console.WriteLine(caseReference + " : ERROR : GetStaffResponseAsync : " + error.StackTrace);
                     }
                     return false;
                 } 
             }
             catch (Exception error)
             {
-                Console.WriteLine("ERROR : GetContactFromDynamoAsync : " + error.Message);
+                Console.WriteLine(caseReference + " : ERROR : GetContactFromDynamoAsync : " + error.Message);
                 Console.WriteLine(error.StackTrace);
                 return false;
             }
@@ -189,7 +194,7 @@ namespace ReviewCase
             catch (Exception error)
             {
                 await SendFailureAsync("Saving case details for " + caseReference, error.Message);
-                Console.WriteLine("ERROR : SaveCase : " + error.StackTrace);
+                Console.WriteLine(caseReference + " : ERROR : SaveCase : " + error.StackTrace);
             }
             return true;
         }
@@ -211,8 +216,8 @@ namespace ReviewCase
             catch (Exception error)
             {
                 await SendFailureAsync("GetSecrets", error.Message);
-                Console.WriteLine("ERROR : GetSecretValue : " + error.Message);
-                Console.WriteLine("ERROR : GetSecretValue : " + error.StackTrace);
+                Console.WriteLine(caseReference + " : ERROR : GetSecretValue : " + error.Message);
+                Console.WriteLine(caseReference + " : ERROR : GetSecretValue : " + error.StackTrace);
                 return false;
             }
         }
@@ -236,8 +241,8 @@ namespace ReviewCase
             }
             catch (Exception error)
             {
-                Console.WriteLine("ERROR : SendSuccessAsync : " + error.Message);
-                Console.WriteLine("ERROR : SendSuccessAsync : " + error.StackTrace);
+                Console.WriteLine(caseReference + " : ERROR : SendSuccessAsync : " + error.Message);
+                Console.WriteLine(caseReference + " : ERROR : SendSuccessAsync : " + error.StackTrace);
             }
             await Task.CompletedTask;
         }
@@ -256,8 +261,8 @@ namespace ReviewCase
             }
             catch (Exception error)
             {
-                Console.WriteLine("ERROR : SendFailureAsync : " + error.Message);
-                Console.WriteLine("ERROR : SendFailureAsync : " + error.StackTrace);
+                Console.WriteLine(caseReference + " : ERROR : SendFailureAsync : " + error.Message);
+                Console.WriteLine(caseReference + " : ERROR : SendFailureAsync : " + error.StackTrace);
             }
             await Task.CompletedTask;
         }
